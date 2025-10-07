@@ -1,0 +1,14 @@
+# Ignore everything
+*
+
+!*/
+
+# But not these files...
+!.gitignore
+!PKGBUILD
+!.SRCINFO
+!version.toml
+!.github/workflows/build-release-packages.yml
+!detect_unreleased_versions.py
+!get_all_version_from_toml.py
+!generate_pkgbuilds.py

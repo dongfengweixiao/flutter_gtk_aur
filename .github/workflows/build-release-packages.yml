@@ -1,0 +1,121 @@
+name: Build and Release Arch Linux Packages
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'version.toml'
+  workflow_dispatch:
+
+jobs:
+  detect-unreleased-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      unreleased_versions: ${{ steps.detect-unreleased.outputs.unreleased_versions }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Python toml package
+        run: |
+            python -m pip install --upgrade pip
+            pip install toml
+
+      - name: Get all versions from version.toml
+        id: get-versions
+        run: echo "all_versions=$(python get_all_version_from_toml.py)" >> $GITHUB_OUTPUT
+
+      - name: Get existing releases
+        id: get-releases
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/${{ github.repository }}/releases
+          mediaType: |
+            format: json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect unreleased versions
+        id: detect-unreleased
+        run: |
+          echo "unreleased_versions=$(python detect_unreleased_versions.py '${{ steps.get-versions.outputs.all_versions }}' '${{ steps.get-releases.outputs.data }}')" >> $GITHUB_OUTPUT
+
+  package-build-release:
+    name: Build and Upload Packages for PKGBUILD in this repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    needs: detect-unreleased-versions
+    if: ${{ needs.detect-unreleased-versions.outputs.unreleased_versions != '[]' }}
+    outputs:
+      artifact-name: ${{ steps.artifact-name.outputs.artifact-name }}
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.detect-unreleased-versions.outputs.unreleased_versions) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Generate artifact name
+        id: artifact-name
+        run: |
+          printf "artifact-name=%s %s-%d %s\n" \
+            "$(grep pkgbase 'pkgbuilds/flutter-gtk-${{ matrix.package.base_version }}/.SRCINFO' | cut -d = -f 2- | xargs)" \
+            "$(grep pkgver 'pkgbuilds/flutter-gtk-${{ matrix.package.base_version }}/.SRCINFO' | cut -d = -f 2- | xargs)" \
+            "$(grep pkgrel 'pkgbuilds/flutter-gtk-${{ matrix.package.base_version }}/.SRCINFO' | cut -d = -f 2- | xargs)" \
+            "$(uname -m)" \
+          >> "$GITHUB_OUTPUT"
+      
+      - name: Build
+        uses: arenekosreal/makepkg-action@v0.2.3
+        with:
+          builddir: pkgbuilds/flutter-gtk-${{ matrix.package.base_version }}
+      
+      - name: Ensure permission
+        run: |
+          sudo chown -R --reference ~ pkgdest
+          ls -l pkgdest
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-name.outputs.artifact-name }}
+          path: pkgdest/${{ steps.artifact-name.outputs.pkgbase }}*.pkg.tar.*
+          if-no-files-found: error
+      
+      - name: Generate Release info
+        id: release-info
+        run: |
+          cd pkgdest
+          {
+            echo "Release for Flutter GTK ${{ matrix.package.base_version }}-${{ matrix.package.pkgrel }}"
+            echo
+            echo 'sha256sums:'
+            echo '```'
+            sha256sum ${{ steps.artifact-name.outputs.pkgbase }}*.pkg.tar.*
+            echo '```'
+          } > ../notes.md
+          echo date=$(date -I | sed s/-//g) >> "$GITHUB_OUTPUT"
+
+      - name: Debug information
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Files in pkgdest:"
+          find pkgdest -name "${{ steps.artifact-name.outputs.pkgbase }}*.pkg.tar.*"
+          echo "Release tag: ${{ steps.release-info.outputs.release_tag }}"
+
+      - name: push to Github Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ matrix.package.base_version }}-${{ matrix.package.pkgrel }}' \
+            --target '${{ github.sha }}' \
+            --title 'Release for Flutter GTK ${{ matrix.package.base_version }}-${{ matrix.package.pkgrel }}' \
+            --notes-file notes.md \
+            --repo '${{ github.repository }}' \
+            --draft --generate-notes
+          gh release upload '${{ matrix.package.base_version }}-${{ matrix.package.pkgrel }}' ./pkgdest/${{ steps.artifact-name.outputs.pkgbase }}*.pkg.tar.* \
+            --repo '${{ github.repository }}' \
+            --clobber
+          gh release edit '${{ matrix.package.base_version }}-${{ matrix.package.pkgrel }}' \
+            --repo '${{ github.repository }}' \
+            --draft=false
