@@ -1,3 +1,9 @@
+["3.7.10"]
+enginever = "ec975089acb540fc60752606a3d3ba809dd1528b"
+sha256_x86_64 = "c1572888c3ff7bcaaad5af71e83141e5c9a2a21ac094b943bcba14976ebe45e9"
+sha256_aarch64 = "07caafcf10c9fdf0fff517fabdb818dea15b20b9b31ee9df2b4364e782fb4331"
+pkgrel = 1
+
 ["3.7.9"]
 enginever = "ec975089acb540fc60752606a3d3ba809dd1528b"
 sha256_x86_64 = "c1572888c3ff7bcaaad5af71e83141e5c9a2a21ac094b943bcba14976ebe45e9"
